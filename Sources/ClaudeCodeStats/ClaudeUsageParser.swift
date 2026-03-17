@@ -165,9 +165,10 @@ actor ClaudeUsageFetcher {
         usage.rawOutput = String(data: data, encoding: .utf8) ?? ""
 
         // Parse windows: five_hour (session), seven_day (weekly), seven_day_opus, seven_day_sonnet
-        // utilization is 0.0-1.0+ (can exceed 1.0 when over limit)
+        // utilization comes as percentage (e.g. 17.0 = 17% used)
         func percentLeft(from utilization: Double) -> Int {
-            return max(0, min(100, Int(((1.0 - utilization) * 100).rounded())))
+            let used = utilization > 1.0 ? utilization : utilization * 100
+            return max(0, min(100, Int((100.0 - used).rounded())))
         }
 
         if let fiveHour = json["five_hour"] as? [String: Any] {
