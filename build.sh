@@ -20,8 +20,9 @@ mkdir -p "$APP_BUNDLE/Contents/Resources"
 # Copy binary
 cp "$BUILD_DIR/release/$APP_NAME" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 
-# Copy icon
+# Copy icon and logo
 cp AppIcon.icns "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
+cp logo.png "$APP_BUNDLE/Contents/Resources/logo.png"
 
 # Create Info.plist
 cat > "$APP_BUNDLE/Contents/Info.plist" << 'PLIST'
