@@ -97,89 +97,74 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        // Draw custom mini bars + text like Stats app
-        let image = renderBarsImage()
+        // Draw Stats-style image: label on top, percentage below
+        let image = renderStatsImage()
         button.image = image
-        button.imagePosition = .imageLeading
-
-        // Show compact text: "S:83 W:89"
-        let usage = store.usage
-        var parts: [String] = []
-        if let s = usage.sessionPercentLeft { parts.append("S:\(s)") }
-        if let w = usage.weeklyPercentLeft { parts.append("W:\(w)") }
-        button.title = parts.joined(separator: " ")
+        button.title = ""
     }
 
-    /// Renders compact vertical bars for the menu bar (similar to Stats app)
-    private func renderBarsImage() -> NSImage {
-        let barWidth: CGFloat = 5
-        let barSpacing: CGFloat = 2
-        let barHeight: CGFloat = 16
-        let cornerRadius: CGFloat = 1.5
+    /// Renders Stats-style menu bar image: label on top, bold percentage below
+    private func renderStatsImage() -> NSImage {
+        let usage = store.usage
 
-        var bars: [(Int?, NSColor)] = []
+        var items: [(String, String)] = []
+        if let s = usage.sessionPercentLeft { items.append(("5H", "\(s)%")) }
+        if let w = usage.weeklyPercentLeft { items.append(("7D", "\(w)%")) }
 
-        // Session bar
-        bars.append((store.usage.sessionPercentLeft, barColor(for: store.usage.sessionPercentLeft)))
-
-        // Weekly bar
-        if let weekly = store.usage.weeklyPercentLeft {
-            bars.append((weekly, barColor(for: weekly)))
+        if items.isEmpty {
+            items.append(("5H", "--%"))
         }
 
-        // Opus bar
-        if let opus = store.usage.opusPercentLeft {
-            bars.append((opus, barColor(for: opus)))
+        let labelFont = NSFont.systemFont(ofSize: 7.5, weight: .medium)
+        let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .bold)
+        let labelColor = NSColor.labelColor.withAlphaComponent(0.6)
+        let valueColor = NSColor.labelColor
+
+        let spacing: CGFloat = 8
+        let height: CGFloat = 22
+
+        // Measure each item width
+        var itemWidths: [CGFloat] = []
+        for (label, value) in items {
+            let labelSize = (label as NSString).size(withAttributes: [.font: labelFont])
+            let valueSize = (value as NSString).size(withAttributes: [.font: valueFont])
+            itemWidths.append(max(labelSize.width, valueSize.width))
         }
 
-        // Sonnet bar
-        if let sonnet = store.usage.sonnetPercentLeft {
-            bars.append((sonnet, barColor(for: sonnet)))
-        }
+        let totalWidth = itemWidths.reduce(0, +) + spacing * CGFloat(max(0, items.count - 1)) + 4
+        let imageSize = NSSize(width: totalWidth, height: height)
 
-        let totalWidth = CGFloat(bars.count) * barWidth + CGFloat(max(0, bars.count - 1)) * barSpacing + 4
-        let imageSize = NSSize(width: totalWidth, height: barHeight + 2)
-
-        let image = NSImage(size: imageSize, flipped: false) { _ in
+        let image = NSImage(size: imageSize, flipped: true) { _ in
             var x: CGFloat = 2
 
-            for (percent, color) in bars {
-                let fillFraction = CGFloat(max(0, min(100, percent ?? 0))) / 100.0
-                let fillHeight = barHeight * fillFraction
-                let emptyHeight = barHeight - fillHeight
-                let y: CGFloat = 1
+            for (idx, (label, value)) in items.enumerated() {
+                let colWidth = itemWidths[idx]
 
-                // Background (empty part)
-                let bgRect = NSRect(x: x, y: y + fillHeight, width: barWidth, height: emptyHeight)
-                let bgPath = NSBezierPath(roundedRect: bgRect, xRadius: cornerRadius, yRadius: cornerRadius)
-                NSColor.gray.withAlphaComponent(0.3).setFill()
-                bgPath.fill()
+                // Draw label on top (centered)
+                let labelAttrs: [NSAttributedString.Key: Any] = [
+                    .font: labelFont,
+                    .foregroundColor: labelColor,
+                ]
+                let labelSize = (label as NSString).size(withAttributes: labelAttrs)
+                let labelX = x + (colWidth - labelSize.width) / 2
+                (label as NSString).draw(at: NSPoint(x: labelX, y: 1), withAttributes: labelAttrs)
 
-                // Filled part
-                if fillHeight > 0 {
-                    let fillRect = NSRect(x: x, y: y, width: barWidth, height: fillHeight)
-                    let fillPath = NSBezierPath(roundedRect: fillRect, xRadius: cornerRadius, yRadius: cornerRadius)
-                    color.setFill()
-                    fillPath.fill()
-                }
+                // Draw value below (centered)
+                let valueAttrs: [NSAttributedString.Key: Any] = [
+                    .font: valueFont,
+                    .foregroundColor: valueColor,
+                ]
+                let valueSize = (value as NSString).size(withAttributes: valueAttrs)
+                let valueX = x + (colWidth - valueSize.width) / 2
+                (value as NSString).draw(at: NSPoint(x: valueX, y: 9), withAttributes: valueAttrs)
 
-                x += barWidth + barSpacing
+                x += colWidth + spacing
             }
 
             return true
         }
 
-        image.isTemplate = false
+        image.isTemplate = true
         return image
-    }
-
-    private func barColor(for percent: Int?) -> NSColor {
-        guard let pct = percent else { return .gray }
-        switch pct {
-        case 0..<15: return .systemRed
-        case 15..<30: return .systemOrange
-        case 30..<60: return .systemYellow
-        default: return .systemGreen
-        }
     }
 }

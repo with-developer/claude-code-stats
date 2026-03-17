@@ -211,8 +211,8 @@ struct UsageRow: View {
         switch pct {
         case 0..<15: return .red
         case 15..<30: return .orange
-        case 30..<60: return Color(nsColor: .systemYellow).opacity(0.85)
-        default: return Color(nsColor: NSColor(red: 0.1, green: 0.7, blue: 0.3, alpha: 1.0))
+        case 30..<60: return Color(nsColor: NSColor(red: 0.8, green: 0.65, blue: 0.0, alpha: 1.0))
+        default: return Color(nsColor: NSColor(red: 0.15, green: 0.55, blue: 0.25, alpha: 1.0))
         }
     }
 
