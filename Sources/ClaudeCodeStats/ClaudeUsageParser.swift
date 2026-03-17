@@ -84,7 +84,7 @@ actor ClaudeUsageFetcher {
         request.httpMethod = "GET"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
-        request.setValue("claude-code-stats/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("claude-code/2.1.72", forHTTPHeaderField: "User-Agent")
         request.timeoutInterval = 10
 
         do {
