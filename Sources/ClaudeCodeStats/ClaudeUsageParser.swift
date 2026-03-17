@@ -84,7 +84,7 @@ actor ClaudeUsageFetcher {
         request.httpMethod = "GET"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
-        request.setValue("claude-code/2.1.72", forHTTPHeaderField: "User-Agent")
+        request.setValue("claude-code/\(Self.claudeVersion)", forHTTPHeaderField: "User-Agent")
         request.timeoutInterval = 10
 
         do {
@@ -347,8 +347,37 @@ actor ClaudeUsageFetcher {
         return String(data: data, encoding: .utf8) ?? ""
     }
 
+    private static var cachedVersion: String?
     private static var cachedBinaryPath: String?
     private static var binarySearchDone = false
+
+    /// Detect installed claude CLI version (cached)
+    static var claudeVersion: String {
+        if let v = cachedVersion { return v }
+        guard let binary = findClaudeBinary() else {
+            cachedVersion = "2.1.0"
+            return cachedVersion!
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: binary)
+        process.arguments = ["--version"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+        do {
+            try process.run()
+            process.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            // Output format: "2.1.71 (Claude Code)"
+            let version = output.components(separatedBy: " ").first ?? "2.1.0"
+            cachedVersion = version
+        } catch {
+            cachedVersion = "2.1.0"
+        }
+        return cachedVersion!
+    }
 
     static func findClaudeBinary() -> String? {
         if binarySearchDone { return cachedBinaryPath }
