@@ -66,9 +66,15 @@ actor ClaudeUsageFetcher {
     private func fetchViaOAuth() async -> ClaudeUsage? {
         guard let token = readOAuthToken() else { return nil }
 
-        // Skip if rate limited
+        // Skip if rate limited - return cached data
         if let until = rateLimitedUntil, Date() < until {
-            lastOAuthError = "Rate limited. 재시도까지 \(Int(until.timeIntervalSinceNow))초"
+            let remaining = Int(until.timeIntervalSinceNow)
+            lastOAuthError = "Rate limited. \(remaining)초 후 재시도"
+            if let last = lastUsage, last.hasData {
+                var cached = last
+                cached.dataSource = "cached"
+                return cached
+            }
             return nil
         }
 

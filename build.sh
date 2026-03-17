@@ -51,9 +51,30 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << 'PLIST'
     <true/>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <false/>
+    </dict>
 </dict>
 </plist>
 PLIST
+
+# Create entitlements (outside bundle)
+cat > "entitlements.plist" << 'ENT'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.network.client</key>
+    <true/>
+</dict>
+</plist>
+ENT
+
+# Re-sign with entitlements
+codesign --force --sign - --entitlements "entitlements.plist" "$APP_BUNDLE"
+rm -f entitlements.plist
 
 echo "=== Build complete ==="
 echo "App bundle created at: $APP_BUNDLE"
