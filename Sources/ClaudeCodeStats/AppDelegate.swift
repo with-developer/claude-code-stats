@@ -27,6 +27,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let button = statusItem.button {
             button.action = #selector(togglePopover)
             button.target = self
+            button.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
             updateMenuBarIcon()
         }
 
@@ -96,10 +97,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        // Draw custom mini bars like Stats app
+        // Draw custom mini bars + text like Stats app
         let image = renderBarsImage()
         button.image = image
-        button.title = ""
+        button.imagePosition = .imageLeading
+
+        // Show compact text: "S:83 W:89"
+        let usage = store.usage
+        var parts: [String] = []
+        if let s = usage.sessionPercentLeft { parts.append("S:\(s)") }
+        if let w = usage.weeklyPercentLeft { parts.append("W:\(w)") }
+        button.title = parts.joined(separator: " ")
     }
 
     /// Renders compact vertical bars for the menu bar (similar to Stats app)
