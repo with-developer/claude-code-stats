@@ -83,6 +83,7 @@ actor ClaudeUsageFetcher {
 
         // Try macOS Keychain via security command
         let keychainServices = [
+            "Claude Code-credentials",
             "claude-code-credentials",
             "com.anthropic.claude-code",
         ]
@@ -135,6 +136,9 @@ actor ClaudeUsageFetcher {
             // The keychain value might be JSON containing the token
             if let jsonData = raw.data(using: .utf8),
                let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
+                // Check nested claudeAiOauth structure (actual Claude Code format)
+                if let oauth = json["claudeAiOauth"] as? [String: Any],
+                   let token = oauth["accessToken"] as? String { return token }
                 if let token = json["accessToken"] as? String { return token }
                 if let token = json["access_token"] as? String { return token }
             }
@@ -161,9 +165,14 @@ actor ClaudeUsageFetcher {
         usage.rawOutput = String(data: data, encoding: .utf8) ?? ""
 
         // Parse windows: five_hour (session), seven_day (weekly), seven_day_opus, seven_day_sonnet
+        // utilization is 0.0-1.0+ (can exceed 1.0 when over limit)
+        func percentLeft(from utilization: Double) -> Int {
+            return max(0, min(100, Int(((1.0 - utilization) * 100).rounded())))
+        }
+
         if let fiveHour = json["five_hour"] as? [String: Any] {
             if let utilization = fiveHour["utilization"] as? Double {
-                usage.sessionPercentLeft = Int(((1.0 - utilization) * 100).rounded())
+                usage.sessionPercentLeft = percentLeft(from: utilization)
             }
             if let resetsAt = fiveHour["resets_at"] as? String {
                 usage.sessionResetDescription = formatResetTime(resetsAt)
@@ -172,7 +181,7 @@ actor ClaudeUsageFetcher {
 
         if let sevenDay = json["seven_day"] as? [String: Any] {
             if let utilization = sevenDay["utilization"] as? Double {
-                usage.weeklyPercentLeft = Int(((1.0 - utilization) * 100).rounded())
+                usage.weeklyPercentLeft = percentLeft(from: utilization)
             }
             if let resetsAt = sevenDay["resets_at"] as? String {
                 usage.weeklyResetDescription = formatResetTime(resetsAt)
@@ -181,7 +190,7 @@ actor ClaudeUsageFetcher {
 
         if let opus = json["seven_day_opus"] as? [String: Any] {
             if let utilization = opus["utilization"] as? Double {
-                usage.opusPercentLeft = Int(((1.0 - utilization) * 100).rounded())
+                usage.opusPercentLeft = percentLeft(from: utilization)
             }
             if let resetsAt = opus["resets_at"] as? String {
                 usage.opusResetDescription = formatResetTime(resetsAt)
@@ -190,7 +199,7 @@ actor ClaudeUsageFetcher {
 
         if let sonnet = json["seven_day_sonnet"] as? [String: Any] {
             if let utilization = sonnet["utilization"] as? Double {
-                usage.sonnetPercentLeft = Int(((1.0 - utilization) * 100).rounded())
+                usage.sonnetPercentLeft = percentLeft(from: utilization)
             }
             if let resetsAt = sonnet["resets_at"] as? String {
                 usage.sonnetResetDescription = formatResetTime(resetsAt)
