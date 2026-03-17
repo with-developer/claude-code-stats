@@ -47,6 +47,8 @@ actor ClaudeUsageFetcher {
             usage.rawOutput = "Claude CLI 로그인이 필요합니다. 터미널에서 claude를 실행하여 로그인해주세요."
         } else if Self.findClaudeBinary() == nil {
             usage.rawOutput = "Claude CLI가 설치되어 있지 않습니다."
+        } else if let oauthError = lastOAuthError {
+            usage.rawOutput = oauthError
         } else {
             usage.rawOutput = "사용량 데이터를 가져올 수 없습니다."
         }
@@ -55,8 +57,20 @@ actor ClaudeUsageFetcher {
 
     // MARK: - OAuth API Strategy
 
+    /// Last OAuth error for display
+    private(set) var lastOAuthError: String?
+    /// Retry-After seconds from 429 response
+    private(set) var retryAfterSeconds: Int = 0
+    private var rateLimitedUntil: Date?
+
     private func fetchViaOAuth() async -> ClaudeUsage? {
         guard let token = readOAuthToken() else { return nil }
+
+        // Skip if rate limited
+        if let until = rateLimitedUntil, Date() < until {
+            lastOAuthError = "Rate limited. 재시도까지 \(Int(until.timeIntervalSinceNow))초"
+            return nil
+        }
 
         guard let url = URL(string: "https://api.anthropic.com/api/oauth/usage") else { return nil }
 
@@ -69,13 +83,34 @@ actor ClaudeUsageFetcher {
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse,
-                  httpResponse.statusCode == 200 else {
+            guard let httpResponse = response as? HTTPURLResponse else { return nil }
+
+            switch httpResponse.statusCode {
+            case 200:
+                lastOAuthError = nil
+                rateLimitedUntil = nil
+                return Self.parseOAuthResponse(data)
+            case 429:
+                let retryAfter = httpResponse.value(forHTTPHeaderField: "Retry-After")
+                    .flatMap { Int($0) } ?? 60
+                rateLimitedUntil = Date().addingTimeInterval(Double(retryAfter))
+                lastOAuthError = "Rate limited (429). \(retryAfter)초 후 재시도"
+                // Return last cached data if available
+                if let last = lastUsage, last.hasData {
+                    var cached = last
+                    cached.dataSource = "oauth (cached)"
+                    return cached
+                }
+                return nil
+            case 401:
+                lastOAuthError = "인증 만료. Claude CLI 재로그인 필요"
+                return nil
+            default:
+                lastOAuthError = "API 오류 (\(httpResponse.statusCode))"
                 return nil
             }
-
-            return Self.parseOAuthResponse(data)
         } catch {
+            lastOAuthError = "네트워크 오류: \(error.localizedDescription)"
             return nil
         }
     }
