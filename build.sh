@@ -46,8 +46,6 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << 'PLIST'
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
-    <key>CFBundleIconFile</key>
-    <string>AppIcon</string>
 </dict>
 </plist>
 PLIST
