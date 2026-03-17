@@ -34,17 +34,17 @@ cp -r ClaudeCodeStats.app /Applications/
 
 ## How It Works
 
-1. Claude Code CLI (`claude --print-usage`)를 주기적으로 호출
-2. 출력에서 세션/주간 사용률 퍼센트를 파싱
-3. macOS 메뉴바에 컴팩트한 수직 바로 표시
+1. OAuth API (`api.anthropic.com/api/oauth/usage`)로 사용량 조회 (우선)
+2. OAuth 실패 시 Claude CLI (`claude -p "/usage"`)로 폴백
+3. 사용률을 파싱하여 macOS 메뉴바에 컴팩트한 수직 바로 표시
 4. 클릭하면 상세 정보 팝오버 표시
 
 ### Menu Bar Display
 
 ```
-┌─────────┐
-│ ▌▌▌     │  ← S(Session), W(Weekly), O(Opus) 바
-└─────────┘
+┌──────────┐
+│ ▌▌▌▌     │  ← Session, Weekly, Opus, Sonnet 바
+└──────────┘
 ```
 
 - 초록색 바 = 60%+ 남음

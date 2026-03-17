@@ -1,80 +1,6 @@
 import SwiftUI
 
-/// The menu bar icon view - displays compact usage bars like the Stats app
-struct MenuBarView: View {
-    let usage: ClaudeUsage
-
-    var body: some View {
-        HStack(spacing: 2) {
-            // Mini bars showing usage levels (like Stats app CPU bars)
-            UsageMiniBar(
-                percent: usage.sessionPercentLeft,
-                color: barColor(for: usage.sessionPercentLeft),
-                label: "S"
-            )
-
-            if usage.weeklyPercentLeft != nil {
-                UsageMiniBar(
-                    percent: usage.weeklyPercentLeft,
-                    color: barColor(for: usage.weeklyPercentLeft),
-                    label: "W"
-                )
-            }
-
-            if usage.opusPercentLeft != nil {
-                UsageMiniBar(
-                    percent: usage.opusPercentLeft,
-                    color: barColor(for: usage.opusPercentLeft),
-                    label: "O"
-                )
-            }
-        }
-        .frame(height: 18)
-    }
-
-    private func barColor(for percent: Int?) -> Color {
-        guard let pct = percent else { return .gray }
-        switch pct {
-        case 0..<15: return .red
-        case 15..<30: return .orange
-        case 30..<60: return .yellow
-        default: return .green
-        }
-    }
-}
-
-/// A single mini vertical bar for the menu bar (like Stats app style)
-struct UsageMiniBar: View {
-    let percent: Int?
-    let color: Color
-    let label: String
-
-    var body: some View {
-        VStack(spacing: 0) {
-            // Vertical bar showing remaining percentage
-            GeometryReader { geo in
-                VStack(spacing: 0) {
-                    Rectangle()
-                        .fill(Color.gray.opacity(0.2))
-                        .frame(height: geo.size.height * (1.0 - fillFraction))
-
-                    Rectangle()
-                        .fill(color)
-                        .frame(height: geo.size.height * fillFraction)
-                }
-            }
-            .frame(width: 6)
-            .clipShape(RoundedRectangle(cornerRadius: 1))
-        }
-    }
-
-    private var fillFraction: CGFloat {
-        guard let pct = percent else { return 0 }
-        return CGFloat(max(0, min(100, pct))) / 100.0
-    }
-}
-
-/// The dropdown menu content
+/// The dropdown menu content (popover)
 struct MenuContentView: View {
     @ObservedObject var store: UsageStore
 
@@ -120,7 +46,7 @@ struct MenuContentView: View {
 
             Divider()
 
-            // Account info
+            // Account & data source info
             if let plan = store.usage.plan {
                 HStack {
                     Text("Plan:")
@@ -145,6 +71,9 @@ struct MenuContentView: View {
                         .foregroundColor(.secondary)
                     Text(lastRefresh, style: .relative)
                     Text("ago")
+                    if !store.usage.dataSource.isEmpty {
+                        Text("(\(store.usage.dataSource))")
+                    }
                 }
                 .font(.caption)
                 .foregroundColor(.secondary)
@@ -191,7 +120,7 @@ struct MenuContentView: View {
     @ViewBuilder
     private var usageRows: some View {
         UsageRow(
-            title: "Session",
+            title: "Session (5h)",
             percentLeft: store.usage.sessionPercentLeft,
             resetDescription: store.usage.sessionResetDescription,
             icon: "clock"
@@ -208,10 +137,19 @@ struct MenuContentView: View {
 
         if store.usage.opusPercentLeft != nil {
             UsageRow(
-                title: "Weekly (Opus/Sonnet)",
+                title: "Weekly (Opus)",
                 percentLeft: store.usage.opusPercentLeft,
                 resetDescription: store.usage.opusResetDescription,
                 icon: "star"
+            )
+        }
+
+        if store.usage.sonnetPercentLeft != nil {
+            UsageRow(
+                title: "Weekly (Sonnet)",
+                percentLeft: store.usage.sonnetPercentLeft,
+                resetDescription: store.usage.sonnetResetDescription,
+                icon: "wand.and.stars"
             )
         }
     }

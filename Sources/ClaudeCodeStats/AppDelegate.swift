@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 /// App delegate that manages the menu bar status item
@@ -7,8 +8,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
     private let store = UsageStore()
-    private var observation: NSKeyValueObservation?
-    private var cancellables: [Any] = []
+    private var cancellables: Set<AnyCancellable> = []
+    private var eventMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Create status bar item
@@ -16,7 +17,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Set up the popover
         popover = NSPopover()
-        popover.contentSize = NSSize(width: 280, height: 320)
+        popover.contentSize = NSSize(width: 280, height: 360)
         popover.behavior = .transient
         popover.contentViewController = NSHostingController(
             rootView: MenuContentView(store: store)
@@ -30,19 +31,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // Observe usage changes to update the icon
-        let usageToken = store.$usage.sink { [weak self] _ in
-            Task { @MainActor in
-                self?.updateMenuBarIcon()
-            }
-        }
-        cancellables.append(usageToken)
+        store.$usage
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.updateMenuBarIcon() }
+            .store(in: &cancellables)
 
-        let loadingToken = store.$isLoading.sink { [weak self] _ in
-            Task { @MainActor in
-                self?.updateMenuBarIcon()
-            }
-        }
-        cancellables.append(loadingToken)
+        store.$isLoading
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.updateMenuBarIcon() }
+            .store(in: &cancellables)
 
         // Start auto-refresh
         store.startAutoRefresh()
@@ -52,7 +49,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem.button else { return }
 
         if popover.isShown {
-            popover.performClose(nil)
+            closePopover()
         } else {
             // Update content before showing
             popover.contentViewController = NSHostingController(
@@ -61,9 +58,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
 
             // Close popover when clicking outside
-            NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-                self?.popover.performClose(nil)
+            eventMonitor = NSEvent.addGlobalMonitorForEvents(
+                matching: [.leftMouseDown, .rightMouseDown]
+            ) { [weak self] _ in
+                self?.closePopover()
             }
+        }
+    }
+
+    private func closePopover() {
+        popover.performClose(nil)
+        if let monitor = eventMonitor {
+            NSEvent.removeMonitor(monitor)
+            eventMonitor = nil
         }
     }
 
@@ -72,7 +79,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem.button else { return }
 
         if store.isLoading && !store.usage.hasData {
-            // Show loading indicator
             button.image = NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: "Loading")
             button.title = ""
             return
@@ -118,10 +124,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             bars.append((opus, barColor(for: opus)))
         }
 
+        // Sonnet bar
+        if let sonnet = store.usage.sonnetPercentLeft {
+            bars.append((sonnet, barColor(for: sonnet)))
+        }
+
         let totalWidth = CGFloat(bars.count) * barWidth + CGFloat(max(0, bars.count - 1)) * barSpacing + 4
         let imageSize = NSSize(width: totalWidth, height: barHeight + 2)
 
-        let image = NSImage(size: imageSize, flipped: false) { rect in
+        let image = NSImage(size: imageSize, flipped: false) { _ in
             var x: CGFloat = 2
 
             for (percent, color) in bars {
