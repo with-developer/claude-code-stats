@@ -92,7 +92,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         if !store.usage.hasData {
-            button.image = NSImage(systemSymbolName: "brain", accessibilityDescription: "Claude Code Stats")
+            if let logoPath = Bundle.main.path(forResource: "logo", ofType: "png"),
+               let logo = NSImage(contentsOfFile: logoPath) {
+                logo.size = NSSize(width: 18, height: 18)
+                logo.isTemplate = true
+                button.image = logo
+            } else {
+                button.image = NSImage(systemSymbolName: "brain", accessibilityDescription: "Claude Code Stats")
+            }
             button.title = ""
             return
         }

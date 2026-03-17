@@ -8,7 +8,14 @@ struct MenuContentView: View {
         VStack(alignment: .leading, spacing: 8) {
             // Header
             HStack {
-                Image(systemName: "brain")
+                if let logoPath = Bundle.main.path(forResource: "logo", ofType: "png"),
+                   let nsImage = NSImage(contentsOfFile: logoPath) {
+                    Image(nsImage: nsImage)
+                        .resizable()
+                        .frame(width: 20, height: 20)
+                } else {
+                    Image(systemName: "brain")
+                }
                 Text("Claude Code Stats")
                     .font(.headline)
                 Spacer()
