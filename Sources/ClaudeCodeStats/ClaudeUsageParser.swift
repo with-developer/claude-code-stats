@@ -5,19 +5,22 @@ struct ClaudeUsage: Sendable {
     var sessionPercentLeft: Int?
     var weeklyPercentLeft: Int?
     var opusPercentLeft: Int?
+    var sonnetPercentLeft: Int?
     var sessionResetDescription: String?
     var weeklyResetDescription: String?
     var opusResetDescription: String?
+    var sonnetResetDescription: String?
     var accountEmail: String?
     var plan: String?
     var rawOutput: String = ""
+    var dataSource: String = ""
 
     var hasData: Bool {
         sessionPercentLeft != nil
     }
 }
 
-/// Fetches and parses Claude Code CLI usage data
+/// Fetches and parses Claude Code usage data via multiple strategies
 actor ClaudeUsageFetcher {
     private var lastUsage: ClaudeUsage?
     private var isFetching = false
@@ -27,109 +30,267 @@ actor ClaudeUsageFetcher {
         isFetching = true
         defer { isFetching = false }
 
-        do {
-            let output = try await runClaudeCLI()
-            let usage = Self.parse(output: output)
+        // Strategy 1: OAuth API (preferred, like codexbar)
+        if let usage = await fetchViaOAuth() {
             lastUsage = usage
             return usage
-        } catch {
-            var usage = ClaudeUsage()
-            usage.rawOutput = "Error: \(error.localizedDescription)"
+        }
+
+        // Strategy 2: CLI
+        if let usage = await fetchViaCLI() {
+            lastUsage = usage
             return usage
+        }
+
+        var usage = ClaudeUsage()
+        usage.rawOutput = "Failed to fetch usage data"
+        return usage
+    }
+
+    // MARK: - OAuth API Strategy
+
+    private func fetchViaOAuth() async -> ClaudeUsage? {
+        guard let token = readOAuthToken() else { return nil }
+
+        guard let url = URL(string: "https://api.anthropic.com/api/oauth/usage") else { return nil }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
+        request.setValue("claude-code-stats/1.0", forHTTPHeaderField: "User-Agent")
+        request.timeoutInterval = 10
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200 else {
+                return nil
+            }
+
+            return Self.parseOAuthResponse(data)
+        } catch {
+            return nil
         }
     }
 
-    /// Runs `claude` CLI in non-interactive mode to get usage info
-    private func runClaudeCLI() async throws -> String {
-        let binaryPath = Self.findClaudeBinary()
-        guard let binaryPath else {
-            throw ClaudeError.notInstalled
+    /// Read OAuth token from macOS Keychain (same approach as codexbar)
+    private func readOAuthToken() -> String? {
+        // Check environment variable first
+        if let token = ProcessInfo.processInfo.environment["CLAUDE_OAUTH_TOKEN"], !token.isEmpty {
+            return token
         }
 
-        // Use `claude --usage` or fall back to parsing `/usage` output
-        // First try the direct API approach
+        // Try macOS Keychain via security command
+        let keychainServices = [
+            "claude-code-credentials",
+            "com.anthropic.claude-code",
+        ]
+
+        for service in keychainServices {
+            if let token = readKeychainItem(service: service) {
+                return token
+            }
+        }
+
+        // Try reading from credential files
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let credentialPaths = [
+            home.appendingPathComponent(".claude/credentials.json"),
+            home.appendingPathComponent(".claude/.credentials.json"),
+        ]
+
+        for path in credentialPaths {
+            if let data = try? Data(contentsOf: path),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                if let token = json["accessToken"] as? String { return token }
+                if let token = json["access_token"] as? String { return token }
+                if let token = json["oauthToken"] as? String { return token }
+                if let claudeAI = json["claude.ai"] as? [String: Any],
+                   let token = claudeAI["accessToken"] as? String { return token }
+            }
+        }
+
+        return nil
+    }
+
+    private func readKeychainItem(service: String) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        process.arguments = ["find-generic-password", "-s", service, "-w"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else { return nil }
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let raw = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            guard let raw, !raw.isEmpty else { return nil }
+
+            // The keychain value might be JSON containing the token
+            if let jsonData = raw.data(using: .utf8),
+               let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
+                if let token = json["accessToken"] as? String { return token }
+                if let token = json["access_token"] as? String { return token }
+            }
+
+            // Or it might be the token directly
+            if raw.hasPrefix("eyJ") || raw.contains("ant-") {
+                return raw
+            }
+
+            return nil
+        } catch {
+            return nil
+        }
+    }
+
+    /// Parse OAuth API response
+    static func parseOAuthResponse(_ data: Data) -> ClaudeUsage? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+
+        var usage = ClaudeUsage()
+        usage.dataSource = "oauth"
+        usage.rawOutput = String(data: data, encoding: .utf8) ?? ""
+
+        // Parse windows: five_hour (session), seven_day (weekly), seven_day_opus, seven_day_sonnet
+        if let fiveHour = json["five_hour"] as? [String: Any] {
+            if let utilization = fiveHour["utilization"] as? Double {
+                usage.sessionPercentLeft = Int(((1.0 - utilization) * 100).rounded())
+            }
+            if let resetsAt = fiveHour["resets_at"] as? String {
+                usage.sessionResetDescription = formatResetTime(resetsAt)
+            }
+        }
+
+        if let sevenDay = json["seven_day"] as? [String: Any] {
+            if let utilization = sevenDay["utilization"] as? Double {
+                usage.weeklyPercentLeft = Int(((1.0 - utilization) * 100).rounded())
+            }
+            if let resetsAt = sevenDay["resets_at"] as? String {
+                usage.weeklyResetDescription = formatResetTime(resetsAt)
+            }
+        }
+
+        if let opus = json["seven_day_opus"] as? [String: Any] {
+            if let utilization = opus["utilization"] as? Double {
+                usage.opusPercentLeft = Int(((1.0 - utilization) * 100).rounded())
+            }
+            if let resetsAt = opus["resets_at"] as? String {
+                usage.opusResetDescription = formatResetTime(resetsAt)
+            }
+        }
+
+        if let sonnet = json["seven_day_sonnet"] as? [String: Any] {
+            if let utilization = sonnet["utilization"] as? Double {
+                usage.sonnetPercentLeft = Int(((1.0 - utilization) * 100).rounded())
+            }
+            if let resetsAt = sonnet["resets_at"] as? String {
+                usage.sonnetResetDescription = formatResetTime(resetsAt)
+            }
+        }
+
+        return usage.hasData ? usage : nil
+    }
+
+    /// Format ISO 8601 reset time to human-readable relative string
+    private static func formatResetTime(_ isoString: String) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+
+        // Try with fractional seconds first, then without
+        let date: Date? = formatter.date(from: isoString) ?? {
+            let f = ISO8601DateFormatter()
+            f.formatOptions = [.withInternetDateTime]
+            return f.date(from: isoString)
+        }()
+
+        guard let date else {
+            return "Resets: \(isoString)"
+        }
+
+        let now = Date()
+        let interval = date.timeIntervalSince(now)
+
+        if interval <= 0 {
+            return "Reset time passed"
+        }
+
+        let hours = Int(interval) / 3600
+        let minutes = (Int(interval) % 3600) / 60
+
+        if hours > 24 {
+            let days = hours / 24
+            let remainHours = hours % 24
+            return "Resets in \(days)d \(remainHours)h"
+        } else if hours > 0 {
+            return "Resets in \(hours)h \(minutes)m"
+        } else {
+            return "Resets in \(minutes)m"
+        }
+    }
+
+    // MARK: - CLI Strategy
+
+    private func fetchViaCLI() async -> ClaudeUsage? {
+        guard let binaryPath = Self.findClaudeBinary() else { return nil }
+
+        do {
+            let output = try await runClaudeCLI(binaryPath: binaryPath)
+            var usage = Self.parseCLIOutput(output: output)
+            if usage.hasData {
+                usage.dataSource = "cli"
+                return usage
+            }
+            return nil
+        } catch {
+            return nil
+        }
+    }
+
+    /// Run claude CLI to get usage info
+    private func runClaudeCLI(binaryPath: String) async throws -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binaryPath)
-        // claude -p "/usage" --output-format text runs a prompt that shows usage
-        // But the best approach is to use the built-in /usage command
-        // We'll use `script` to create a pseudo-terminal for the claude CLI
-        let scriptProcess = Process()
-        scriptProcess.executableURL = URL(fileURLWithPath: "/usr/bin/script")
+        process.arguments = ["-p", "/usage", "--output-format", "text"]
 
         let pipe = Pipe()
         let errorPipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = errorPipe
 
-        // Use script command to provide a PTY for claude
-        let tempFile = FileManager.default.temporaryDirectory
-            .appendingPathComponent("claude_usage_\(ProcessInfo.processInfo.processIdentifier).txt")
-
-        scriptProcess.arguments = ["-q", tempFile.path, binaryPath, "--print-usage"]
-        scriptProcess.standardOutput = pipe
-        scriptProcess.standardError = errorPipe
-
-        // Set environment to avoid interactive prompts
         var env = ProcessInfo.processInfo.environment
         env["TERM"] = "dumb"
         env["NO_COLOR"] = "1"
-        scriptProcess.environment = env
+        // Remove CLAUDECODE env var to avoid nested session detection
+        env.removeValue(forKey: "CLAUDECODE")
+        process.environment = env
 
-        // Try direct approach first: claude with print-usage flag
-        let directProcess = Process()
-        directProcess.executableURL = URL(fileURLWithPath: binaryPath)
-        directProcess.arguments = ["--print-usage"]
-        directProcess.standardOutput = pipe
-        directProcess.standardError = errorPipe
-        directProcess.environment = env
-
-        try directProcess.run()
+        try process.run()
 
         // Wait with timeout
         let deadline = Date().addingTimeInterval(15)
-        while directProcess.isRunning && Date() < deadline {
+        while process.isRunning && Date() < deadline {
             try await Task.sleep(nanoseconds: 100_000_000) // 100ms
         }
 
-        if directProcess.isRunning {
-            directProcess.terminate()
+        if process.isRunning {
+            process.terminate()
             throw ClaudeError.timeout
         }
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: data, encoding: .utf8) ?? ""
-
-        if output.isEmpty || directProcess.terminationStatus != 0 {
-            // Fall back to reading from config/state files
-            return try readFromStateFiles()
-        }
-
-        return output
-    }
-
-    /// Read usage from Claude's local state files as fallback
-    private func readFromStateFiles() throws -> String {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        // Claude Code stores state in ~/.claude/
-        let stateDir = home.appendingPathComponent(".claude")
-
-        // Try reading the settings/state file
-        let possiblePaths = [
-            stateDir.appendingPathComponent("state.json"),
-            stateDir.appendingPathComponent("usage.json"),
-            stateDir.appendingPathComponent("settings.json"),
-        ]
-
-        for path in possiblePaths {
-            if let data = try? Data(contentsOf: path),
-               let content = String(data: data, encoding: .utf8) {
-                return content
-            }
-        }
-
-        throw ClaudeError.noData
+        return String(data: data, encoding: .utf8) ?? ""
     }
 
     static func findClaudeBinary() -> String? {
-        // Check common locations
         let paths = [
             "/usr/local/bin/claude",
             "/opt/homebrew/bin/claude",
@@ -166,9 +327,9 @@ actor ClaudeUsageFetcher {
         return nil
     }
 
-    // MARK: - Parsing
+    // MARK: - CLI Output Parsing
 
-    static func parse(output: String) -> ClaudeUsage {
+    static func parseCLIOutput(output: String) -> ClaudeUsage {
         var usage = ClaudeUsage()
         usage.rawOutput = output
 
@@ -180,19 +341,24 @@ actor ClaudeUsageFetcher {
             return jsonUsage
         }
 
-        // Parse text output (from /usage command)
+        // Parse text output line-by-line
         usage.sessionPercentLeft = extractPercent(
-            label: "Current session",
+            labels: ["Current session", "5-hour", "five hour", "session"],
             lines: lines
         )
 
         usage.weeklyPercentLeft = extractPercent(
-            label: "Current week (all models)",
+            labels: ["Current week (all models)", "weekly (all", "7-day", "seven day"],
             lines: lines
         )
 
         usage.opusPercentLeft = extractPercent(
-            labels: ["Current week (Opus)", "Current week (Sonnet only)", "Current week (Sonnet)"],
+            labels: ["Current week (Opus)", "weekly (Opus)", "opus"],
+            lines: lines
+        )
+
+        usage.sonnetPercentLeft = extractPercent(
+            labels: ["Current week (Sonnet)", "weekly (Sonnet)", "sonnet only"],
             lines: lines
         )
 
@@ -205,9 +371,10 @@ actor ClaudeUsageFetcher {
         }
 
         // Extract reset descriptions
-        usage.sessionResetDescription = extractReset(label: "Current session", lines: lines)
-        usage.weeklyResetDescription = extractReset(label: "Current week", lines: lines)
-        usage.opusResetDescription = extractReset(labels: ["Opus", "Sonnet"], lines: lines)
+        usage.sessionResetDescription = extractReset(labels: ["Current session", "session"], lines: lines)
+        usage.weeklyResetDescription = extractReset(labels: ["Current week", "weekly"], lines: lines)
+        usage.opusResetDescription = extractReset(labels: ["Opus"], lines: lines)
+        usage.sonnetResetDescription = extractReset(labels: ["Sonnet"], lines: lines)
 
         // Extract account info
         usage.accountEmail = extractField(patterns: [
@@ -217,12 +384,12 @@ actor ClaudeUsageFetcher {
 
         usage.plan = extractField(patterns: [
             #"(?i)(Claude\s+(?:Max|Pro|Team|Enterprise|Ultra))"#,
+            #"(?i)Plan:\s*(Max|Pro|Team|Enterprise|Ultra)"#,
         ], text: clean)
 
         return usage
     }
 
-    /// Parse JSON format usage data
     private static func parseJSON(_ text: String) -> ClaudeUsage? {
         guard let data = text.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -231,6 +398,7 @@ actor ClaudeUsageFetcher {
 
         var usage = ClaudeUsage()
         usage.rawOutput = text
+        usage.dataSource = "json"
 
         if let session = json["sessionPercentLeft"] as? Int {
             usage.sessionPercentLeft = session
@@ -251,7 +419,7 @@ actor ClaudeUsageFetcher {
     /// Strip ANSI escape codes
     static func stripANSI(_ text: String) -> String {
         text.replacingOccurrences(
-            of: #"\x1B\[[0-9;]*[a-zA-Z]"#,
+            of: #"\x1B\[[0-?]*[ -/]*[@-~]"#,
             with: "",
             options: .regularExpression
         ).replacingOccurrences(
@@ -261,11 +429,6 @@ actor ClaudeUsageFetcher {
         )
     }
 
-    /// Extract percentage near a label
-    private static func extractPercent(label: String, lines: [String]) -> Int? {
-        extractPercent(labels: [label], lines: lines)
-    }
-
     private static func extractPercent(labels: [String], lines: [String]) -> Int? {
         let normalizedLabels = labels.map { normalizeForSearch($0) }
 
@@ -273,7 +436,6 @@ actor ClaudeUsageFetcher {
             let normalizedLine = normalizeForSearch(line)
             guard normalizedLabels.contains(where: { normalizedLine.contains($0) }) else { continue }
 
-            // Search in a window of lines after the label
             let window = lines[idx..<min(idx + 12, lines.count)]
             for candidate in window {
                 if let pct = percentFromLine(candidate) {
@@ -284,7 +446,6 @@ actor ClaudeUsageFetcher {
         return nil
     }
 
-    /// Extract a percentage from a single line
     private static func percentFromLine(_ line: String) -> Int? {
         guard let regex = try? NSRegularExpression(
             pattern: #"(\d{1,3}(?:\.\d+)?)\s*%"#
@@ -305,17 +466,12 @@ actor ClaudeUsageFetcher {
         if ["left", "remaining", "available"].contains(where: lower.contains) {
             return Int(clamped.rounded())
         }
-        return nil
+        // Ambiguous - assume "left"
+        return Int(clamped.rounded())
     }
 
-    /// Collect all percentages from lines
     private static func allPercents(_ lines: [String]) -> [Int] {
         lines.compactMap { percentFromLine($0) }
-    }
-
-    /// Extract reset time description
-    private static func extractReset(label: String, lines: [String]) -> String? {
-        extractReset(labels: [label], lines: lines)
     }
 
     private static func extractReset(labels: [String], lines: [String]) -> String? {
@@ -327,16 +483,28 @@ actor ClaudeUsageFetcher {
 
             let window = lines[idx..<min(idx + 14, lines.count)]
             for candidate in window {
-                if candidate.lowercased().contains("reset") {
-                    let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
-                    return trimmed
+                let lower = candidate.lowercased()
+                if lower.contains("reset") {
+                    return candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                // Also match date patterns like "Dec 23 at 4:00PM"
+                if let regex = try? NSRegularExpression(
+                    pattern: #"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}"#,
+                    options: .caseInsensitive
+                ) {
+                    let range = NSRange(candidate.startIndex..<candidate.endIndex, in: candidate)
+                    if regex.firstMatch(in: candidate, range: range) != nil {
+                        let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !trimmed.isEmpty {
+                            return "Resets: \(trimmed)"
+                        }
+                    }
                 }
             }
         }
         return nil
     }
 
-    /// Extract a field value using regex patterns
     private static func extractField(patterns: [String], text: String) -> String? {
         for pattern in patterns {
             guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
