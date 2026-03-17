@@ -43,7 +43,13 @@ actor ClaudeUsageFetcher {
         }
 
         var usage = ClaudeUsage()
-        usage.rawOutput = "Failed to fetch usage data"
+        if readOAuthToken() == nil && Self.findClaudeBinary() != nil {
+            usage.rawOutput = "Claude CLI 로그인이 필요합니다. 터미널에서 claude를 실행하여 로그인해주세요."
+        } else if Self.findClaudeBinary() == nil {
+            usage.rawOutput = "Claude CLI가 설치되어 있지 않습니다."
+        } else {
+            usage.rawOutput = "사용량 데이터를 가져올 수 없습니다."
+        }
         return usage
     }
 
