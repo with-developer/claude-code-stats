@@ -347,8 +347,14 @@ actor ClaudeUsageFetcher {
         return String(data: data, encoding: .utf8) ?? ""
     }
 
+    private static var cachedBinaryPath: String?
+    private static var binarySearchDone = false
+
     static func findClaudeBinary() -> String? {
-        let paths = [
+        if binarySearchDone { return cachedBinaryPath }
+        binarySearchDone = true
+
+        var paths = [
             "/usr/local/bin/claude",
             "/opt/homebrew/bin/claude",
             "\(NSHomeDirectory())/.claude/bin/claude",
@@ -356,31 +362,22 @@ actor ClaudeUsageFetcher {
             "\(NSHomeDirectory())/.npm-global/bin/claude",
         ]
 
+        // Add NVM node paths
+        let nvmDir = "\(NSHomeDirectory())/.nvm/versions/node"
+        if let nodes = try? FileManager.default.contentsOfDirectory(atPath: nvmDir) {
+            for node in nodes.sorted().reversed() {
+                paths.append("\(nvmDir)/\(node)/bin/claude")
+            }
+        }
+
         for path in paths {
             if FileManager.default.isExecutableFile(atPath: path) {
+                cachedBinaryPath = path
                 return path
             }
         }
 
-        // Try which
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
-        process.arguments = ["claude"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let path = String(data: data, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if let path, !path.isEmpty, FileManager.default.isExecutableFile(atPath: path) {
-                return path
-            }
-        } catch {}
-
+        cachedBinaryPath = nil
         return nil
     }
 
