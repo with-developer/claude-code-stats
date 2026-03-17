@@ -1,7 +1,6 @@
 # Claude Code Stats
 
 macOS 메뉴바에서 Claude Code 사용량을 실시간으로 모니터링하는 앱입니다.
-[Stats](https://github.com/exelban/stats) 앱처럼 메뉴바에 사용량 퍼센트를 직접 표시합니다.
 
 ## Menu Bar Display
 
@@ -48,16 +47,11 @@ cp -r ClaudeCodeStats.app /Applications/
 ```
 Sources/ClaudeCodeStats/
 ├── main.swift              # App entry point (menu bar only, no Dock icon)
-├── AppDelegate.swift       # NSStatusItem & Stats-style menu bar rendering
+├── AppDelegate.swift       # NSStatusItem & menu bar rendering
 ├── MenuBarView.swift       # SwiftUI popover with detailed usage rows
 ├── ClaudeUsageParser.swift # OAuth API + CLI fetching & parsing
 └── UsageStore.swift        # Observable state & auto-refresh timer
 ```
-
-## Inspired By
-
-- [CodexBar](https://github.com/steipete/codexbar) - AI coding assistant usage monitor
-- [Stats](https://github.com/exelban/stats) - macOS system monitor
 
 ## License
 
