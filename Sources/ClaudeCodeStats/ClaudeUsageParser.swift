@@ -251,8 +251,7 @@ actor ClaudeUsageFetcher {
         usage.rawOutput = String(data: data, encoding: .utf8) ?? ""
 
         func percentLeft(from utilization: Double) -> Int {
-            let used = utilization > 1.0 ? utilization : utilization * 100
-            return max(0, min(100, Int((100.0 - used).rounded())))
+            return max(0, min(100, Int((100.0 - utilization).rounded())))
         }
 
         if let fiveHour = json["five_hour"] as? [String: Any] {
