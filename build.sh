@@ -77,6 +77,22 @@ ENT
 codesign --force --sign - --entitlements "entitlements.plist" "$APP_BUNDLE"
 rm -f entitlements.plist
 
+# Cache OAuth token from keychain (avoids keychain prompts at runtime)
+TOKEN_CACHE="$HOME/.claude/.stats-token-cache"
+if [ ! -f "$TOKEN_CACHE" ]; then
+    echo "=== Caching OAuth token ==="
+    RAW=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null || true)
+    if [ -n "$RAW" ]; then
+        # Extract accessToken from JSON
+        TOKEN=$(echo "$RAW" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('claudeAiOauth',{}).get('accessToken',''))" 2>/dev/null || true)
+        if [ -n "$TOKEN" ]; then
+            echo "$TOKEN" > "$TOKEN_CACHE"
+            chmod 600 "$TOKEN_CACHE"
+            echo "Token cached to $TOKEN_CACHE"
+        fi
+    fi
+fi
+
 echo "=== Build complete ==="
 echo "App bundle created at: $APP_BUNDLE"
 echo ""
