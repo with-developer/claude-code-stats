@@ -2,6 +2,8 @@
 
 macOS 메뉴바에서 Claude Code 사용량을 실시간으로 모니터링하는 앱입니다.
 
+<img src="screenshot.png" width="500">
+
 ## Menu Bar Display
 
 두 가지 스타일을 지원합니다:
