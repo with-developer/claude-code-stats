@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AppKit
 
 /// Menu bar display style
 enum MenuBarStyle: Int, CaseIterable {
@@ -28,6 +29,7 @@ final class UsageStore: ObservableObject {
 
     private let fetcher = ClaudeUsageFetcher()
     private var refreshTask: Task<Void, Never>?
+    private var wakeObserver: NSObjectProtocol?
 
     init() {
         let saved = UserDefaults.standard.integer(forKey: "menuBarStyle")
@@ -40,6 +42,19 @@ final class UsageStore: ObservableObject {
 
     func startAutoRefresh() {
         stopAutoRefresh()
+
+        // Register wake observer once
+        if wakeObserver == nil {
+            wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didWakeNotification,
+                object: nil, queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    self?.handleWake()
+                }
+            }
+        }
+
         refreshTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.refresh()
@@ -47,6 +62,17 @@ final class UsageStore: ObservableObject {
                 try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
             }
         }
+    }
+
+    private func handleWake() {
+        // Reset loading state in case it was stuck during sleep
+        isLoading = false
+        // Clear rate limit so we can fetch fresh data
+        Task {
+            await fetcher.clearRateLimit()
+        }
+        // Restart the refresh loop
+        startAutoRefresh()
     }
 
     func stopAutoRefresh() {
@@ -57,6 +83,7 @@ final class UsageStore: ObservableObject {
     func refresh() async {
         guard !isLoading else { return }
         isLoading = true
+        defer { isLoading = false }
         error = nil
 
         let result = await fetcher.fetch()
@@ -64,7 +91,6 @@ final class UsageStore: ObservableObject {
         if result.hasData && result.dataSource == "oauth" {
             lastRefresh = Date()
         }
-        isLoading = false
 
         if !result.hasData && !result.rawOutput.isEmpty {
             error = result.rawOutput
@@ -73,5 +99,8 @@ final class UsageStore: ObservableObject {
 
     deinit {
         refreshTask?.cancel()
+        if let observer = wakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+        }
     }
 }

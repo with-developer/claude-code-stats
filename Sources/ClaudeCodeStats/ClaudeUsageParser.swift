@@ -45,6 +45,12 @@ actor ClaudeUsageFetcher {
     private var lastOAuthError: String?
     private var rateLimitedUntil: Date?
 
+    /// Clear rate limit (e.g. after wake from sleep)
+    func clearRateLimit() {
+        rateLimitedUntil = nil
+        isFetching = false
+    }
+
     func fetch() async -> ClaudeUsage {
         guard !isFetching else { return lastUsage ?? ClaudeUsage() }
         isFetching = true
@@ -141,10 +147,10 @@ actor ClaudeUsageFetcher {
                 rateLimitedUntil = nil
                 return Self.parseOAuthResponse(data)
             case 429:
-                let retryAfter = httpResponse.value(forHTTPHeaderField: "Retry-After")
+                let serverRetryAfter = httpResponse.value(forHTTPHeaderField: "Retry-After")
                     .flatMap { Int($0) } ?? 60
-                rateLimitedUntil = Date().addingTimeInterval(Double(retryAfter))
-                lastOAuthError = "Rate limited (429). \(Self.formatSeconds(retryAfter)) 후 재시도"
+                rateLimitedUntil = Date().addingTimeInterval(Double(serverRetryAfter))
+                lastOAuthError = "Rate limited (429). \(Self.formatSeconds(serverRetryAfter)) 후 해제"
                 if let last = lastUsage, last.hasData {
                     var cached = last
                     cached.dataSource = "oauth (cached)"
