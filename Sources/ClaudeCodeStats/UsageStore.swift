@@ -58,7 +58,10 @@ final class UsageStore: ObservableObject {
         refreshTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.refresh()
-                guard let interval = self?.refreshInterval else { break }
+                guard let self = self else { break }
+                // If usage is exhausted, poll every 30 min instead
+                let isExhausted = self.usage.sessionPercentLeft == 0 || self.usage.weeklyPercentLeft == 0
+                let interval = isExhausted ? max(self.refreshInterval, 1800) : self.refreshInterval
                 try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
             }
         }
