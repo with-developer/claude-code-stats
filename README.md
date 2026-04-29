@@ -1,4 +1,4 @@
-# Claude Code Stats
+# Claude Usage
 
 A macOS menu bar app for monitoring Claude Code usage in real-time.
 
